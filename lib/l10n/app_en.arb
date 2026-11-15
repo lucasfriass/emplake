@@ -1,0 +1,65 @@
+{
+  "@@locale": "en",
+  "appTitle": "Emplake",
+  "plateHeader": "MATH PLATE • EMPLAKE",
+  "developedBy": "Developed by: {names}",
+  "@developedBy": {
+    "placeholders": {
+      "names": { "type": "String" }
+    }
+  },
+  "selectLanguage": "Language",
+  "navGame": "Play",
+  "navSettings": "Settings",
+  "navHelp": "Help",
+  "levelEasy": "Easy",
+  "levelIntermediate": "Intermediate",
+  "levelAdvanced": "Advanced",
+  "levelHard": "Hard",
+  "scoreLabel": "Score: {score}",
+  "@scoreLabel": {
+    "placeholders": {
+      "score": { "type": "int" }
+    }
+  },
+  "solvedCount": "Solved: {count}",
+  "@solvedCount": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "checkButton": "Check",
+  "clearButton": "Clear",
+  "skipButton": "Skip",
+  "logoutButton": "Sign Out",
+  "successMessage": "Congratulations! Valid equation! +{points} pts",
+  "@successMessage": {
+    "placeholders": {
+      "points": { "type": "int" }
+    }
+  },
+  "errorNotEqual": "Both sides are not equal ({left} ≠ {right}).",
+  "@errorNotEqual": {
+    "placeholders": {
+      "left": { "type": "String" },
+      "right": { "type": "String" }
+    }
+  },
+  "errorNonIntegerDivision": "Non-integer division is not allowed in this level!",
+  "errorInvalidSyntax": "Invalid mathematical expression or unbalanced parentheses.",
+  "errorOperatorNotAllowed": "Operator not allowed in this difficulty level.",
+  "settingsTitle": "Settings",
+  "darkModeLabel": "Dark Mode",
+  "fontSizeLabel": "Font Size",
+  "fontFamilyLabel": "Font Family",
+  "themeColorLabel": "Theme Seed Color",
+  "presetThemesLabel": "Preset Themes",
+  "themeDefault": "System Default",
+  "themeOcean": "Ocean",
+  "themeForest": "Forest",
+  "themeSunset": "Sunset",
+  "helpTitle": "How to Play Emplake",
+  "helpBody": "Insert mathematical operators between the 4 license plate digits to form a true equation.\n\nLevel Rules:\n• Easy: All operators (+, -, *, /, √, ∛, !, ^, |x|, floor ⌊x⌋, ceil ⌈x⌉) and allows decimal division.\n• Intermediate: No floor/ceil. Integer division only.\n• Advanced: No cube root or exponentiation. Integer division only.\n• Hard: Only +, -, *, /, ( ), and absolute value |x|. Integer division only.",
+  "closeButton": "Close",
+  "loadingData": "Syncing progress with cloud..."
+}

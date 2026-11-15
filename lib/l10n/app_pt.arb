@@ -1,0 +1,65 @@
+{
+  "@@locale": "pt",
+  "appTitle": "Emplake",
+  "plateHeader": "BRASIL • EMPLAKE",
+  "developedBy": "Desenvolvido por: {names}",
+  "@developedBy": {
+    "placeholders": {
+      "names": { "type": "String" }
+    }
+  },
+  "selectLanguage": "Idioma",
+  "navGame": "Jogar",
+  "navSettings": "Configurações",
+  "navHelp": "Ajuda",
+  "levelEasy": "Fácil",
+  "levelIntermediate": "Intermediário",
+  "levelAdvanced": "Avançado",
+  "levelHard": "Difícil",
+  "scoreLabel": "Pontuação: {score}",
+  "@scoreLabel": {
+    "placeholders": {
+      "score": { "type": "int" }
+    }
+  },
+  "solvedCount": "Resolvidos: {count}",
+  "@solvedCount": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "checkButton": "Verificar",
+  "clearButton": "Limpar",
+  "skipButton": "Pular",
+  "logoutButton": "Sair",
+  "successMessage": "Parabéns! Igualdade válida! +{points} pts",
+  "@successMessage": {
+    "placeholders": {
+      "points": { "type": "int" }
+    }
+  },
+  "errorNotEqual": "Os dois lados não são iguais ({left} ≠ {right}).",
+  "@errorNotEqual": {
+    "placeholders": {
+      "left": { "type": "String" },
+      "right": { "type": "String" }
+    }
+  },
+  "errorNonIntegerDivision": "Neste nível não é permitida divisão não inteira!",
+  "errorInvalidSyntax": "Expressão matemática inválida ou parênteses desbalanceados.",
+  "errorOperatorNotAllowed": "Operador não permitido neste nível.",
+  "settingsTitle": "Configurações",
+  "darkModeLabel": "Modo Escuro",
+  "fontSizeLabel": "Tamanho da Fonte",
+  "fontFamilyLabel": "Tipo da Fonte",
+  "themeColorLabel": "Cor Semente do Tema",
+  "presetThemesLabel": "Temas Prontos",
+  "themeDefault": "Padrão do Sistema",
+  "themeOcean": "Oceano",
+  "themeForest": "Floresta",
+  "themeSunset": "Pôr do Sol",
+  "helpTitle": "Como Jogar Emplake",
+  "helpBody": "Insira operadores matemáticos entre os 4 dígitos da placa para formar uma equação verdadeira.\n\nRegras por Nível:\n• Fácil: Todos os operadores (+, -, *, /, √, ∛, !, ^, |x|, piso ⌊x⌋, teto ⌈x⌉) e aceita divisão decimal.\n• Intermediário: Sem piso/teto. Apenas divisões inteiras.\n• Avançado: Sem raiz cúbica e potência. Apenas divisões inteiras.\n• Difícil: Apenas +, -, *, /, ( ), e módulo |x|. Apenas divisões inteiras.",
+  "closeButton": "Fechar",
+  "loadingData": "Sincronizando progresso na nuvem..."
+}
