@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../core/sound_service.dart';
 
 class AppSettingsState {
   final ThemeMode themeMode;
@@ -47,6 +48,8 @@ class AppSettingsNotifier extends Notifier<AppSettingsState> {
     final fontFamily = prefs.getString('fontFamily') ?? 'Roboto';
     final colorValue = prefs.getInt('seedColor') ?? 0xFF1E56A0;
     final langCode = prefs.getString('locale') ?? 'pt';
+    // Som continua desligado por padrão; só liga se o usuário ativou antes
+    final soundEnabled = prefs.getBool('soundEnabled') ?? false;
 
     return AppSettingsState(
       themeMode: ThemeMode.values[themeIndex],
@@ -54,7 +57,7 @@ class AppSettingsNotifier extends Notifier<AppSettingsState> {
       fontFamily: fontFamily,
       seedColor: Color(colorValue),
       locale: Locale(langCode),
-      isSoundEnabled: false,
+      isSoundEnabled: soundEnabled,
     );
   }
 
@@ -86,7 +89,9 @@ class AppSettingsNotifier extends Notifier<AppSettingsState> {
   }
 
   void toggleSound() {
-    state = state.copyWith(isSoundEnabled: !state.isSoundEnabled);
+    final enabled = !state.isSoundEnabled;
+    _prefs.setBool('soundEnabled', enabled);
+    state = state.copyWith(isSoundEnabled: enabled);
   }
 
   /// Salva a última rota visitada (ex: '/game' ou '/settings')
@@ -109,3 +114,9 @@ final appSettingsProvider =
     NotifierProvider<AppSettingsNotifier, AppSettingsState>(
   AppSettingsNotifier.new,
 );
+
+final soundServiceProvider = Provider<SoundService>((ref) {
+  final service = SoundService();
+  ref.onDispose(service.dispose);
+  return service;
+});

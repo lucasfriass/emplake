@@ -1,12 +1,17 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_spinkit/flutter_spinkit.dart';
 import '../core/math_engine.dart';
+import '../core/neumorphic.dart';
 import '../l10n/app_localizations.dart';
 import '../providers/app_settings_provider.dart';
 import '../providers/game_provider.dart';
+
+/// Tipo de feedback visual mostrado na placa após verificar a equação.
+enum _Feedback { none, success, error }
 
 class GameScreen extends ConsumerStatefulWidget {
   const GameScreen({super.key});
@@ -25,10 +30,29 @@ class _GameScreenState extends ConsumerState<GameScreen>
   int _selectedSlot = 1;
   bool _isAnimatingReset = false;
 
+  // Animação de feedback (acerto: pulso verde + confete; erro: tremor vermelho)
+  late final AnimationController _fbController;
+  _Feedback _fb = _Feedback.none;
+
   @override
   void initState() {
     super.initState();
+    _fbController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
     _progressFuture = ref.read(firestoreServiceProvider).fetchUserProgress();
+  }
+
+  @override
+  void dispose() {
+    _fbController.dispose();
+    super.dispose();
+  }
+
+  void _playFeedback(_Feedback feedback) {
+    _fb = feedback;
+    _fbController.forward(from: 0);
   }
 
   void _reloadProgress() {
@@ -39,7 +63,7 @@ class _GameScreenState extends ConsumerState<GameScreen>
 
   void _playClickSound() {
     if (ref.read(appSettingsProvider).isSoundEnabled) {
-      SystemSound.play(SystemSoundType.click);
+      ref.read(soundServiceProvider).playClick();
     }
   }
 
@@ -112,9 +136,15 @@ class _GameScreenState extends ConsumerState<GameScreen>
     List<String> solvedNumbers,
     AppLocalizations l10n,
   ) async {
-    _playClickSound();
     final raw = _buildRawExpression(plate);
     final result = MathEngine.evaluateEquation(raw, level);
+
+    // Feedback diferente para acerto e erro (animação + som opcional)
+    _playFeedback(result.isValid ? _Feedback.success : _Feedback.error);
+    if (ref.read(appSettingsProvider).isSoundEnabled) {
+      final sound = ref.read(soundServiceProvider);
+      result.isValid ? sound.playSuccess() : sound.playError();
+    }
 
     // Animação obrigatória dos operadores voltando aos botões após verificar
     await _animateOperatorsBack();
@@ -123,7 +153,18 @@ class _GameScreenState extends ConsumerState<GameScreen>
     if (result.isValid) {
       final pts = _pointsForDifficulty(level);
       final service = ref.read(firestoreServiceProvider);
-      await service.recordSolvedNumber(plate, pts);
+      try {
+        await service.recordSolvedNumber(plate, pts);
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(l10n.errorSavingProgress),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+        return;
+      }
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -166,10 +207,11 @@ class _GameScreenState extends ConsumerState<GameScreen>
     }
   }
 
-  void _skipPlate(List<String> solvedNumbers) {
+  void _skipPlate(String currentPlate, List<String> solvedNumbers) {
     _playClickSound();
     final service = ref.read(firestoreServiceProvider);
-    final next = service.generateUnsolvedPlate(solvedNumbers);
+    // Evita sortear o mesmo número que está sendo pulado
+    final next = service.generateUnsolvedPlate([...solvedNumbers, currentPlate]);
     ref.read(currentPlateProvider.notifier).setPlate(next);
     _animateOperatorsBack();
   }
@@ -202,282 +244,413 @@ class _GameScreenState extends ConsumerState<GameScreen>
           );
         }
 
+        if (snapshot.hasError && !snapshot.hasData) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.cloud_off, size: 48, color: colorScheme.error),
+                const SizedBox(height: 12),
+                Text(l10n.errorLoadingData),
+                const SizedBox(height: 16),
+                NeuButton(
+                  onPressed: _reloadProgress,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.refresh),
+                      const SizedBox(width: 8),
+                      Text(l10n.retryButton),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
         final progress = snapshot.data ??
             const UserProgressData(score: 0, solvedNumbers: []);
 
-        // Garante inicialização da placa com um número ainda não resolvido
+        // Garante uma placa ainda não resolvida por este usuário
         var currentPlate = ref.watch(currentPlateProvider);
-        if (currentPlate == null) {
+        if (currentPlate == null ||
+            progress.solvedNumbers.contains(currentPlate)) {
           currentPlate = ref
               .read(firestoreServiceProvider)
               .generateUnsolvedPlate(progress.solvedNumbers);
+          final fresh = currentPlate;
           Future.microtask(() {
             if (mounted) {
-              ref.read(currentPlateProvider.notifier).setPlate(currentPlate);
+              ref.read(currentPlateProvider.notifier).setPlate(fresh);
             }
           });
         }
+        final plate = currentPlate;
 
-        final rawExpression = _buildRawExpression(currentPlate);
+        final rawExpression = _buildRawExpression(plate);
         final latexExpression = MathEngine.toLatex(rawExpression);
         final allowedOps = MathEngine.allowedOperators(difficulty);
+
+        final levels = <(DifficultyLevel, String)>[
+          (DifficultyLevel.easy, l10n.levelEasy),
+          (DifficultyLevel.intermediate, l10n.levelIntermediate),
+          (DifficultyLevel.advanced, l10n.levelAdvanced),
+          (DifficultyLevel.hard, l10n.levelHard),
+        ];
+
+        // Conteúdo da placa (fica fora do AnimatedBuilder para não reconstruir)
+        final plateContent = Column(
+          children: [
+            // Faixa superior estilo placa Mercosul / Emplake
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    colorScheme.primary,
+                    Color.lerp(colorScheme.primary, Colors.black, 0.25)!,
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                l10n.plateHeader,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: colorScheme.onPrimary,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 2,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+
+            // Linha interativa: [Slot0] D0 [Slot1] D1 [Slot2] D2 [Slot3] D3 [Slot4]
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  for (int i = 0; i < 4; i++) ...[
+                    _buildSlotButton(i, colorScheme),
+                    _buildDigitTile(plate[i], colorScheme),
+                  ],
+                  _buildSlotButton(4, colorScheme),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+
+            // Expressão bruta construída
+            Text(
+              rawExpression,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 10),
+
+            // Renderizador LaTeX obrigatório logo abaixo da fórmula
+            SizedBox(
+              width: double.infinity,
+              child: NeuBox(
+                pressed: true,
+                radius: 14,
+                padding:
+                    const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                child: Center(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Math.tex(
+                      latexExpression,
+                      textStyle: Theme.of(context)
+                          .textTheme
+                          .headlineSmall
+                          ?.copyWith(color: colorScheme.primary),
+                      onErrorFallback: (_) => Text(
+                        rawExpression,
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
 
         return Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 720),
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Cabeçalho: Pontuação, Resolvidos e Botão de Som Opcional
+                  // Cabeçalho: pontuação, resolvidos e botão de som opcional
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Wrap(
-                        spacing: 12,
-                        children: [
-                          Chip(
-                            avatar: const Icon(Icons.stars_rounded, size: 18),
-                            label: Text(l10n.scoreLabel(progress.score)),
-                          ),
-                          Chip(
-                            avatar:
-                                const Icon(Icons.check_circle_outline, size: 18),
-                            label: Text(
-                              l10n.solvedCount(progress.solvedNumbers.length),
+                      Flexible(
+                        child: Wrap(
+                          spacing: 12,
+                          runSpacing: 10,
+                          children: [
+                            _buildStatPill(
+                              Icons.stars_rounded,
+                              l10n.scoreLabel(progress.score),
+                              colorScheme,
                             ),
-                          ),
-                        ],
+                            _buildStatPill(
+                              Icons.check_circle_outline,
+                              l10n.solvedCount(progress.solvedNumbers.length),
+                              colorScheme,
+                            ),
+                          ],
+                        ),
                       ),
-                      IconButton.filledTonal(
+                      const SizedBox(width: 12),
+                      NeuButton(
+                        minSize: const Size(48, 48),
+                        radius: 24,
+                        padding: const EdgeInsets.all(10),
+                        tooltip: isSoundOn
+                            ? l10n.soundOnTooltip
+                            : l10n.soundOffTooltip,
                         onPressed: () {
                           ref.read(appSettingsProvider.notifier).toggleSound();
+                          // Feedback imediato ao ligar o som
+                          if (ref.read(appSettingsProvider).isSoundEnabled) {
+                            ref.read(soundServiceProvider).playClick();
+                          }
                         },
-                        icon: Icon(
+                        child: Icon(
                           isSoundOn ? Icons.volume_up : Icons.volume_off,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 18),
 
-                  // Seletor dos 4 Níveis de Dificuldade
-                  SegmentedButton<DifficultyLevel>(
-                    segments: [
-                      ButtonSegment(
-                        value: DifficultyLevel.easy,
-                        label: Text(l10n.levelEasy),
-                      ),
-                      ButtonSegment(
-                        value: DifficultyLevel.intermediate,
-                        label: Text(l10n.levelIntermediate),
-                      ),
-                      ButtonSegment(
-                        value: DifficultyLevel.advanced,
-                        label: Text(l10n.levelAdvanced),
-                      ),
-                      ButtonSegment(
-                        value: DifficultyLevel.hard,
-                        label: Text(l10n.levelHard),
-                      ),
-                    ],
-                    selected: {difficulty},
-                    onSelectionChanged: (selection) {
-                      _playClickSound();
-                      ref
-                          .read(difficultyProvider.notifier)
-                          .setDifficulty(selection.first);
-                      _animateOperatorsBack();
-                    },
-                  ),
-                  const SizedBox(height: 24),
-
-                  // PLACA INTERATIVA EXCLUSIVA (Design Automotivo com Slots Clicáveis)
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                        color: colorScheme.primary,
-                        width: 3,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.12),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        // Faixa superior estilo placa Mercosul / Emplake
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          decoration: BoxDecoration(
-                            color: colorScheme.primary,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            l10n.plateHeader,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: colorScheme.onPrimary,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 2,
-                              fontSize: 12,
+                  // Seletor dos 4 níveis de dificuldade
+                  Row(
+                    children: [
+                      for (final (level, label) in levels)
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            child: NeuButton(
+                              selected: difficulty == level,
+                              radius: 14,
+                              minSize: const Size(0, 44),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 10,
+                              ),
+                              onPressed: () {
+                                _playClickSound();
+                                ref
+                                    .read(difficultyProvider.notifier)
+                                    .setDifficulty(level);
+                                _animateOperatorsBack();
+                              },
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(label),
+                              ),
                             ),
                           ),
                         ),
-                        const SizedBox(height: 16),
+                    ],
+                  ),
+                  const SizedBox(height: 28),
 
-                        // Linha interativa: [Slot0] D0 [Slot1] D1 [Slot2] D2 [Slot3] D3 [Slot4]
-                        FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                  // Placa interativa com animação de acerto/erro
+                  AnimatedBuilder(
+                    animation: _fbController,
+                    child: plateContent,
+                    builder: (context, child) {
+                      final t = _fbController.value;
+                      final pulse = math.sin(t * math.pi).clamp(0.0, 1.0);
+                      double dx = 0;
+                      double scale = 1;
+                      Color? accent;
+                      IconData? icon;
+
+                      switch (_fb) {
+                        case _Feedback.success:
+                          scale = 1 + 0.06 * pulse;
+                          accent = Colors.green.shade600;
+                          icon = Icons.check_circle_rounded;
+                          break;
+                        case _Feedback.error:
+                          dx = math.sin(t * math.pi * 8) * 12 * (1 - t);
+                          accent = colorScheme.error;
+                          icon = Icons.cancel_rounded;
+                          break;
+                        case _Feedback.none:
+                          break;
+                      }
+
+                      final active = accent != null && t > 0 && t < 1;
+
+                      return Transform.translate(
+                        offset: Offset(dx, 0),
+                        child: Transform.scale(
+                          scale: scale,
+                          child: Stack(
+                            clipBehavior: Clip.none,
                             children: [
-                              for (int i = 0; i < 4; i++) ...[
-                                _buildSlotButton(i, colorScheme),
-                                _buildDigitTile(currentPlate[i], colorScheme),
-                              ],
-                              _buildSlotButton(4, colorScheme),
+                              NeuBox(
+                                radius: 26,
+                                depth: 8,
+                                padding: const EdgeInsets.all(18),
+                                borderColor: active ? accent : null,
+                                extraShadows: active
+                                    ? [
+                                        BoxShadow(
+                                          color: accent
+                                              .withValues(alpha: 0.55 * pulse),
+                                          blurRadius: 32,
+                                          spreadRadius: 4,
+                                        ),
+                                      ]
+                                    : const [],
+                                child: child!,
+                              ),
+                              if (_fb == _Feedback.success)
+                                Positioned.fill(
+                                  child: IgnorePointer(
+                                    child: CustomPaint(
+                                      painter: _BurstPainter(t),
+                                    ),
+                                  ),
+                                ),
+                              if (active)
+                                Positioned.fill(
+                                  child: IgnorePointer(
+                                    child: Center(
+                                      child: Opacity(
+                                        opacity: pulse.toDouble(),
+                                        child: Transform.scale(
+                                          scale: 0.6 + 0.6 * pulse,
+                                          child: Icon(
+                                            icon,
+                                            size: 96,
+                                            color: accent,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
                         ),
-                        const SizedBox(height: 16),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 28),
 
-                        // Expressão bruta construída
-                        Text(
-                          rawExpression,
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleLarge
-                              ?.copyWith(fontWeight: FontWeight.w600),
-                        ),
-                        const SizedBox(height: 8),
-
-                        // Renderizador LaTeX Obrigatório logo abaixo da fórmula
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                            vertical: 12,
-                            horizontal: 16,
-                          ),
-                          decoration: BoxDecoration(
-                            color: colorScheme.surface,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Center(
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: Math.tex(
-                                latexExpression,
-                                textStyle: Theme.of(context)
-                                    .textTheme
-                                    .headlineSmall
-                                    ?.copyWith(color: colorScheme.primary),
-                                onErrorFallback: (_) => Text(
-                                  rawExpression,
-                                  style:
-                                      Theme.of(context).textTheme.headlineSmall,
-                                ),
-                              ),
+                  // Teclado de operadores permitidos no nível
+                  NeuBox(
+                    radius: 24,
+                    padding: const EdgeInsets.all(16),
+                    child: Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 12,
+                      runSpacing: 14,
+                      children: [
+                        ...allowedOps.map(
+                          (op) => NeuButton(
+                            minSize: const Size(52, 48),
+                            onPressed: () => _insertOperator(op),
+                            child: Text(
+                              op,
+                              style: const TextStyle(fontSize: 18),
                             ),
                           ),
+                        ),
+                        // Apagar do slot selecionado
+                        NeuButton(
+                          minSize: const Size(56, 48),
+                          onPressed: _backspaceSlot,
+                          child: const Icon(Icons.backspace_outlined),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 28),
 
-                  // Teclado de Operadores Permitidos no Nível
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Wrap(
-                        alignment: WrapAlignment.center,
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          ...allowedOps.map(
-                            (op) => ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                minimumSize: const Size(52, 48),
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 12),
-                              ),
-                              onPressed: () => _insertOperator(op),
-                              child: Text(
-                                op,
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ),
-                          // Botão Apagar do slot selecionado
-                          FilledButton.tonal(
-                            style: FilledButton.styleFrom(
-                              minimumSize: const Size(56, 48),
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 12),
-                            ),
-                            onPressed: _backspaceSlot,
-                            child: const Icon(Icons.backspace_outlined),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Botões de Ação: Verificar, Limpar e Pular
+                  // Ações: Verificar, Limpar e Pular
                   Row(
                     children: [
                       Expanded(
                         flex: 2,
-                        child: FilledButton.icon(
-                          style: FilledButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                          ),
+                        child: NeuButton(
+                          filled: true,
+                          minSize: const Size(0, 56),
                           onPressed: () => _verifyEquation(
-                            currentPlate!,
+                            plate,
                             difficulty,
                             progress.solvedNumbers,
                             l10n,
                           ),
-                          icon: const Icon(Icons.check_circle),
-                          label: Text(l10n.checkButton),
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.check_circle),
+                                const SizedBox(width: 8),
+                                Text(l10n.checkButton),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 14),
                       Expanded(
-                        child: OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                          ),
+                        child: NeuButton(
+                          minSize: const Size(0, 56),
                           onPressed: () {
                             _playClickSound();
                             _animateOperatorsBack();
                           },
-                          icon: const Icon(Icons.refresh),
-                          label: Text(l10n.clearButton),
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.refresh),
+                                const SizedBox(width: 6),
+                                Text(l10n.clearButton),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 14),
                       Expanded(
-                        child: TextButton.icon(
-                          style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
+                        child: NeuButton(
+                          minSize: const Size(0, 56),
+                          onPressed: () =>
+                              _skipPlate(plate, progress.solvedNumbers),
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.skip_next),
+                                const SizedBox(width: 6),
+                                Text(l10n.skipButton),
+                              ],
+                            ),
                           ),
-                          onPressed: () => _skipPlate(progress.solvedNumbers),
-                          icon: const Icon(Icons.skip_next),
-                          label: Text(l10n.skipButton),
                         ),
                       ),
                     ],
@@ -491,20 +664,36 @@ class _GameScreenState extends ConsumerState<GameScreen>
     );
   }
 
-  Widget _buildDigitTile(String digit, ColorScheme colorScheme) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: colorScheme.primaryContainer,
-        borderRadius: BorderRadius.circular(10),
+  Widget _buildStatPill(IconData icon, String text, ColorScheme colorScheme) {
+    return NeuBox(
+      radius: 14,
+      depth: 3,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18, color: colorScheme.primary),
+          const SizedBox(width: 6),
+          Text(text, style: const TextStyle(fontWeight: FontWeight.bold)),
+        ],
       ),
-      child: Text(
-        digit,
-        style: TextStyle(
-          fontSize: 34,
-          fontWeight: FontWeight.w900,
-          color: colorScheme.onPrimaryContainer,
+    );
+  }
+
+  Widget _buildDigitTile(String digit, ColorScheme colorScheme) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: NeuBox(
+        radius: 12,
+        depth: 4,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Text(
+          digit,
+          style: TextStyle(
+            fontSize: 34,
+            fontWeight: FontWeight.w900,
+            color: colorScheme.primary,
+          ),
         ),
       ),
     );
@@ -519,37 +708,38 @@ class _GameScreenState extends ConsumerState<GameScreen>
         _playClickSound();
         setState(() => _selectedSlot = index);
       },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        constraints: const BoxConstraints(minWidth: 36, minHeight: 52),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? colorScheme.secondaryContainer
-              : colorScheme.surface.withValues(alpha: 0.7),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: isSelected ? colorScheme.secondary : colorScheme.outline,
-            width: isSelected ? 2.5 : 1,
-          ),
-        ),
-        child: Center(
-          // Animação de retorno dos operadores aos botões
-          child: AnimatedScale(
-            scale: _isAnimatingReset ? 0.0 : 1.0,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeInBack,
-            child: AnimatedSlide(
-              offset: _isAnimatingReset ? const Offset(0, 1.5) : Offset.zero,
-              duration: const Duration(milliseconds: 300),
-              child: Text(
-                content.isEmpty ? '·' : content,
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: content.isEmpty
-                      ? colorScheme.outline
-                      : colorScheme.onSecondaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 3),
+        child: NeuBox(
+          radius: 12,
+          depth: 3,
+          pressed: isSelected,
+          borderColor: isSelected ? colorScheme.primary : null,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 52),
+            child: Center(
+              widthFactor: 1,
+              heightFactor: 1,
+              // Animação de retorno dos operadores aos botões
+              child: AnimatedScale(
+                scale: _isAnimatingReset ? 0.0 : 1.0,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInBack,
+                child: AnimatedSlide(
+                  offset:
+                      _isAnimatingReset ? const Offset(0, 1.5) : Offset.zero,
+                  duration: const Duration(milliseconds: 300),
+                  child: Text(
+                    content.isEmpty ? '·' : content,
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: content.isEmpty
+                          ? colorScheme.outline
+                          : colorScheme.onSurface,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -558,4 +748,41 @@ class _GameScreenState extends ConsumerState<GameScreen>
       ),
     );
   }
+}
+
+/// Confete simples que se espalha a partir do centro da placa ao acertar.
+class _BurstPainter extends CustomPainter {
+  _BurstPainter(this.t);
+
+  final double t;
+
+  static const List<Color> _colors = [
+    Color(0xFFFFC107),
+    Color(0xFF4CAF50),
+    Color(0xFF29B6F6),
+    Color(0xFFEF5350),
+    Color(0xFFAB47BC),
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (t <= 0 || t >= 1) return;
+    final center = size.center(Offset.zero);
+    final eased = Curves.easeOut.transform(t);
+    const count = 20;
+    for (int i = 0; i < count; i++) {
+      final angle = i * 2 * math.pi / count;
+      final reach = size.width * 0.5 + (i.isEven ? 50 : 15);
+      final dist = 30 + eased * reach;
+      final pos = center +
+          Offset(math.cos(angle) * dist, math.sin(angle) * dist * 0.7);
+      final paint = Paint()
+        ..color = _colors[i % _colors.length].withValues(alpha: 1 - t);
+      canvas.drawCircle(pos, (i.isEven ? 6.0 : 4.0) * (1 - t) + 1, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _BurstPainter oldDelegate) =>
+      oldDelegate.t != t;
 }

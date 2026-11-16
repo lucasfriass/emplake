@@ -53,6 +53,11 @@ class MainShell extends ConsumerWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final currentIndex = _locationToIndex(currentLocation);
 
+    // Salva a rota atual sempre que ela muda (inclusive botão voltar do navegador)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(appSettingsProvider.notifier).saveLastRoute(currentLocation);
+    });
+
     return Scaffold(
       body: SafeArea(child: child),
       bottomNavigationBar: CurvedNavigationBar(

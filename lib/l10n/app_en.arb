@@ -31,7 +31,7 @@
   "checkButton": "Check",
   "clearButton": "Clear",
   "skipButton": "Skip",
-  "logoutButton": "Sign Out",
+  "logoutButton": "Log out",
   "successMessage": "Congratulations! Valid equation! +{points} pts",
   "@successMessage": {
     "placeholders": {
@@ -61,5 +61,10 @@
   "helpTitle": "How to Play Emplake",
   "helpBody": "Insert mathematical operators between the 4 license plate digits to form a true equation.\n\nLevel Rules:\n• Easy: All operators (+, -, *, /, √, ∛, !, ^, |x|, floor ⌊x⌋, ceil ⌈x⌉) and allows decimal division.\n• Intermediate: No floor/ceil. Integer division only.\n• Advanced: No cube root or exponentiation. Integer division only.\n• Hard: Only +, -, *, /, ( ), and absolute value |x|. Integer division only.",
   "closeButton": "Close",
-  "loadingData": "Syncing progress with cloud..."
+  "loadingData": "Syncing progress with cloud...",
+  "errorLoadingData": "Could not load your progress.",
+  "errorSavingProgress": "Could not save your progress. Please try again.",
+  "retryButton": "Try again",
+  "soundOnTooltip": "Turn sound off",
+  "soundOffTooltip": "Turn sound on"
 }

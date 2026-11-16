@@ -313,6 +313,36 @@ abstract class AppLocalizations {
   /// In pt, this message translates to:
   /// **'Sincronizando progresso na nuvem...'**
   String get loadingData;
+
+  /// No description provided for @errorLoadingData.
+  ///
+  /// In pt, this message translates to:
+  /// **'Não foi possível carregar seu progresso.'**
+  String get errorLoadingData;
+
+  /// No description provided for @errorSavingProgress.
+  ///
+  /// In pt, this message translates to:
+  /// **'Não foi possível salvar seu progresso. Tente novamente.'**
+  String get errorSavingProgress;
+
+  /// No description provided for @retryButton.
+  ///
+  /// In pt, this message translates to:
+  /// **'Tentar novamente'**
+  String get retryButton;
+
+  /// No description provided for @soundOnTooltip.
+  ///
+  /// In pt, this message translates to:
+  /// **'Desligar som'**
+  String get soundOnTooltip;
+
+  /// No description provided for @soundOffTooltip.
+  ///
+  /// In pt, this message translates to:
+  /// **'Ligar som'**
+  String get soundOffTooltip;
 }
 
 class _AppLocalizationsDelegate

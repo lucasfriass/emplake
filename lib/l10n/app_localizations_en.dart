@@ -64,7 +64,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get skipButton => 'Skip';
 
   @override
-  String get logoutButton => 'Sign Out';
+  String get logoutButton => 'Log out';
 
   @override
   String successMessage(int points) {
@@ -130,4 +130,20 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get loadingData => 'Syncing progress with cloud...';
+
+  @override
+  String get errorLoadingData => 'Could not load your progress.';
+
+  @override
+  String get errorSavingProgress =>
+      'Could not save your progress. Please try again.';
+
+  @override
+  String get retryButton => 'Try again';
+
+  @override
+  String get soundOnTooltip => 'Turn sound off';
+
+  @override
+  String get soundOffTooltip => 'Turn sound on';
 }

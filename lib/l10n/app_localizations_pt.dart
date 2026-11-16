@@ -129,4 +129,20 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String get loadingData => 'Sincronizando progresso na nuvem...';
+
+  @override
+  String get errorLoadingData => 'Não foi possível carregar seu progresso.';
+
+  @override
+  String get errorSavingProgress =>
+      'Não foi possível salvar seu progresso. Tente novamente.';
+
+  @override
+  String get retryButton => 'Tentar novamente';
+
+  @override
+  String get soundOnTooltip => 'Desligar som';
+
+  @override
+  String get soundOffTooltip => 'Ligar som';
 }

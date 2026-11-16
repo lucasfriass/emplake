@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_ui_localizations/firebase_ui_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -21,6 +22,9 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // Na web, aguarda a restauração da sessão antes de decidir a rota inicial
+  await FirebaseAuth.instance.authStateChanges().first;
 
   final prefs = await SharedPreferences.getInstance();
 
@@ -110,6 +114,7 @@ class _EmplakeAppState extends ConsumerState<EmplakeApp> {
       ],
       localizationsDelegates: const [
         AppLocalizations.delegate,
+        FirebaseUILocalizations.delegate,
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
@@ -118,11 +123,13 @@ class _EmplakeAppState extends ConsumerState<EmplakeApp> {
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: lightScheme,
+        scaffoldBackgroundColor: lightScheme.surfaceContainer,
         fontFamily: GoogleFonts.getFont(settings.fontFamily).fontFamily,
       ),
       darkTheme: ThemeData(
         useMaterial3: true,
         colorScheme: darkScheme,
+        scaffoldBackgroundColor: darkScheme.surfaceContainer,
         fontFamily: GoogleFonts.getFont(settings.fontFamily).fontFamily,
       ),
       builder: (context, child) {

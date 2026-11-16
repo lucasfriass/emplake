@@ -61,5 +61,10 @@
   "helpTitle": "Como Jogar Emplake",
   "helpBody": "Insira operadores matemáticos entre os 4 dígitos da placa para formar uma equação verdadeira.\n\nRegras por Nível:\n• Fácil: Todos os operadores (+, -, *, /, √, ∛, !, ^, |x|, piso ⌊x⌋, teto ⌈x⌉) e aceita divisão decimal.\n• Intermediário: Sem piso/teto. Apenas divisões inteiras.\n• Avançado: Sem raiz cúbica e potência. Apenas divisões inteiras.\n• Difícil: Apenas +, -, *, /, ( ), e módulo |x|. Apenas divisões inteiras.",
   "closeButton": "Fechar",
-  "loadingData": "Sincronizando progresso na nuvem..."
+  "loadingData": "Sincronizando progresso na nuvem...",
+  "errorLoadingData": "Não foi possível carregar seu progresso.",
+  "errorSavingProgress": "Não foi possível salvar seu progresso. Tente novamente.",
+  "retryButton": "Tentar novamente",
+  "soundOnTooltip": "Desligar som",
+  "soundOffTooltip": "Ligar som"
 }
