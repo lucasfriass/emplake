@@ -343,6 +343,48 @@ abstract class AppLocalizations {
   /// In pt, this message translates to:
   /// **'Ligar som'**
   String get soundOffTooltip;
+
+  /// No description provided for @historyTitle.
+  ///
+  /// In pt, this message translates to:
+  /// **'Histórico'**
+  String get historyTitle;
+
+  /// No description provided for @historyEmpty.
+  ///
+  /// In pt, this message translates to:
+  /// **'Você ainda não resolveu nenhum número.'**
+  String get historyEmpty;
+
+  /// No description provided for @historyNoSolution.
+  ///
+  /// In pt, this message translates to:
+  /// **'Solução não registrada'**
+  String get historyNoSolution;
+
+  /// No description provided for @historyPoints.
+  ///
+  /// In pt, this message translates to:
+  /// **'+{points} pts'**
+  String historyPoints(int points);
+
+  /// No description provided for @eraseButton.
+  ///
+  /// In pt, this message translates to:
+  /// **'Apagar'**
+  String get eraseButton;
+
+  /// No description provided for @solvedHint.
+  ///
+  /// In pt, this message translates to:
+  /// **'Toque em Limpar ou Pular para continuar.'**
+  String get solvedHint;
+
+  /// No description provided for @retryHint.
+  ///
+  /// In pt, this message translates to:
+  /// **'Você pode editar a expressão e verificar de novo.'**
+  String get retryHint;
 }
 
 class _AppLocalizationsDelegate

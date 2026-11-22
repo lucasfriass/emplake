@@ -66,5 +66,17 @@
   "errorSavingProgress": "Não foi possível salvar seu progresso. Tente novamente.",
   "retryButton": "Tentar novamente",
   "soundOnTooltip": "Desligar som",
-  "soundOffTooltip": "Ligar som"
+  "soundOffTooltip": "Ligar som",
+  "historyTitle": "Histórico",
+  "historyEmpty": "Você ainda não resolveu nenhum número.",
+  "historyNoSolution": "Solução não registrada",
+  "historyPoints": "+{points} pts",
+  "@historyPoints": {
+    "placeholders": {
+      "points": { "type": "int" }
+    }
+  },
+  "eraseButton": "Apagar",
+  "solvedHint": "Toque em Limpar ou Pular para continuar.",
+  "retryHint": "Você pode editar a expressão e verificar de novo."
 }

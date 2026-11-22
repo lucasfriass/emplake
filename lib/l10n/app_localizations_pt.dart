@@ -145,4 +145,27 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String get soundOffTooltip => 'Ligar som';
+
+  @override
+  String get historyTitle => 'Histórico';
+
+  @override
+  String get historyEmpty => 'Você ainda não resolveu nenhum número.';
+
+  @override
+  String get historyNoSolution => 'Solução não registrada';
+
+  @override
+  String historyPoints(int points) {
+    return '+$points pts';
+  }
+
+  @override
+  String get eraseButton => 'Apagar';
+
+  @override
+  String get solvedHint => 'Toque em Limpar ou Pular para continuar.';
+
+  @override
+  String get retryHint => 'Você pode editar a expressão e verificar de novo.';
 }

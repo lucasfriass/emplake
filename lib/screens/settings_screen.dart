@@ -85,6 +85,7 @@ class SettingsScreen extends ConsumerWidget {
                     minSize: const Size(0, 44),
                     onPressed: () async {
                       ref.invalidate(currentPlateProvider);
+                      ref.invalidate(gameSessionProvider);
                       await FirebaseAuth.instance.signOut();
                       if (context.mounted) context.go('/login');
                     },

@@ -14,6 +14,23 @@ class UserProgressData {
   });
 }
 
+/// Um número resolvido, com a solução montada pelo usuário (se registrada).
+class SolvedEntry {
+  final String plate;
+  final String? expression;
+  final String? level;
+  final int? points;
+  final DateTime? solvedAt;
+
+  const SolvedEntry({
+    required this.plate,
+    this.expression,
+    this.level,
+    this.points,
+    this.solvedAt,
+  });
+}
+
 class FirestoreGameService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
@@ -46,16 +63,72 @@ class FirestoreGameService {
     return UserProgressData(score: score, solvedNumbers: solved);
   }
 
-  /// Registra número resolvido e soma pontos no Firestore
-  Future<void> recordSolvedNumber(String plateNumber, int pointsEarned) async {
+  /// Registra número resolvido, soma pontos e guarda a solução do usuário.
+  /// A solução fica no mesmo documento (mapa `solutions`), então as regras
+  /// atuais do Firestore para `users/{uid}` continuam valendo.
+  Future<void> recordSolvedNumber(
+    String plateNumber,
+    int pointsEarned, {
+    required String expression,
+    required String level,
+  }) async {
     final docRef = _userDoc();
     if (docRef == null) return;
 
     await docRef.set({
       'score': FieldValue.increment(pointsEarned),
       'solvedNumbers': FieldValue.arrayUnion([plateNumber]),
+      'solutions': {
+        plateNumber: {
+          'expression': expression,
+          'level': level,
+          'points': pointsEarned,
+          'solvedAt': FieldValue.serverTimestamp(),
+        },
+      },
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+  }
+
+  /// Histórico: números resolvidos (mais recentes primeiro) com a solução.
+  /// Números resolvidos antes do histórico existir aparecem sem solução.
+  Future<List<SolvedEntry>> fetchHistory() async {
+    final docRef = _userDoc();
+    if (docRef == null) return [];
+
+    final snapshot = await docRef.get();
+    final data = snapshot.data();
+    if (data == null) return [];
+
+    final solutions = Map<String, dynamic>.from(data['solutions'] ?? {});
+    final solvedNumbers = List<String>.from(data['solvedNumbers'] ?? []);
+
+    final withSolution = <SolvedEntry>[];
+    solutions.forEach((plate, value) {
+      final m = Map<String, dynamic>.from(value as Map);
+      final ts = m['solvedAt'];
+      withSolution.add(SolvedEntry(
+        plate: plate,
+        expression: m['expression'] as String?,
+        level: m['level'] as String?,
+        points: (m['points'] as num?)?.toInt(),
+        solvedAt: ts is Timestamp ? ts.toDate() : null,
+      ));
+    });
+    withSolution.sort((a, b) {
+      final da = a.solvedAt, db = b.solvedAt;
+      if (da == null && db == null) return 0;
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return db.compareTo(da);
+    });
+
+    final legacy = solvedNumbers
+        .where((n) => !solutions.containsKey(n))
+        .map((n) => SolvedEntry(plate: n))
+        .toList();
+
+    return [...withSolution, ...legacy];
   }
 
   /// Gera um número de 4 dígitos (0000 a 9999) garantidamente não resolvido
@@ -106,3 +179,30 @@ class CurrentPlateNotifier extends Notifier<String?> {
 final currentPlateProvider = NotifierProvider<CurrentPlateNotifier, String?>(
   CurrentPlateNotifier.new,
 );
+
+/// Mensagem persistente mostrada abaixo da placa após verificar.
+class GameResultBanner {
+  final bool success;
+  final String message;
+  final String? detail;
+  final String hint;
+
+  const GameResultBanner({
+    required this.success,
+    required this.message,
+    this.detail,
+    required this.hint,
+  });
+}
+
+/// Estado da rodada em andamento (operadores, bloqueio e resultado).
+/// Vive fora da tela para não se perder ao trocar de página (histórico,
+/// configurações). É recriado ao sair da conta.
+class GameSession {
+  List<String> slots = ['', '', '=', '', ''];
+  int selectedSlot = 1;
+  bool locked = false;
+  GameResultBanner? banner;
+}
+
+final gameSessionProvider = Provider<GameSession>((ref) => GameSession());

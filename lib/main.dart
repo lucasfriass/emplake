@@ -12,6 +12,7 @@ import 'firebase_options.dart';
 import 'l10n/app_localizations.dart';
 import 'providers/app_settings_provider.dart';
 import 'screens/game_screen.dart';
+import 'screens/history_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_shell.dart';
 import 'screens/settings_screen.dart';
@@ -80,6 +81,10 @@ class _EmplakeAppState extends ConsumerState<EmplakeApp> {
             GoRoute(
               path: '/game',
               builder: (context, state) => const GameScreen(),
+            ),
+            GoRoute(
+              path: '/history',
+              builder: (context, state) => const HistoryScreen(),
             ),
             GoRoute(
               path: '/settings',

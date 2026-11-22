@@ -66,5 +66,17 @@
   "errorSavingProgress": "Could not save your progress. Please try again.",
   "retryButton": "Try again",
   "soundOnTooltip": "Turn sound off",
-  "soundOffTooltip": "Turn sound on"
+  "soundOffTooltip": "Turn sound on",
+  "historyTitle": "History",
+  "historyEmpty": "You haven't solved any numbers yet.",
+  "historyNoSolution": "Solution not recorded",
+  "historyPoints": "+{points} pts",
+  "@historyPoints": {
+    "placeholders": {
+      "points": { "type": "int" }
+    }
+  },
+  "eraseButton": "Erase",
+  "solvedHint": "Tap Clear or Skip to continue.",
+  "retryHint": "You can edit the expression and check again."
 }

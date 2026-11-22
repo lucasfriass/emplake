@@ -16,7 +16,8 @@ class MainShell extends ConsumerWidget {
   });
 
   int _locationToIndex(String location) {
-    if (location.startsWith('/settings')) return 1;
+    if (location.startsWith('/history')) return 1;
+    if (location.startsWith('/settings')) return 2;
     return 0;
   }
 
@@ -69,6 +70,7 @@ class MainShell extends ConsumerWidget {
         animationDuration: const Duration(milliseconds: 300),
         items: [
           Icon(Icons.sports_esports, size: 28, color: colorScheme.onPrimary),
+          Icon(Icons.history, size: 28, color: colorScheme.onPrimary),
           Icon(Icons.settings, size: 28, color: colorScheme.onPrimary),
           Icon(Icons.help_outline, size: 28, color: colorScheme.onPrimary),
         ],
@@ -77,9 +79,12 @@ class MainShell extends ConsumerWidget {
             ref.read(appSettingsProvider.notifier).saveLastRoute('/game');
             context.go('/game');
           } else if (index == 1) {
+            ref.read(appSettingsProvider.notifier).saveLastRoute('/history');
+            context.go('/history');
+          } else if (index == 2) {
             ref.read(appSettingsProvider.notifier).saveLastRoute('/settings');
             context.go('/settings');
-          } else if (index == 2) {
+          } else if (index == 3) {
             _showHelpDialog(context, l10n);
           }
         },

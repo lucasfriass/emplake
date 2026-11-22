@@ -146,4 +146,27 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get soundOffTooltip => 'Turn sound on';
+
+  @override
+  String get historyTitle => 'History';
+
+  @override
+  String get historyEmpty => 'You haven\'t solved any numbers yet.';
+
+  @override
+  String get historyNoSolution => 'Solution not recorded';
+
+  @override
+  String historyPoints(int points) {
+    return '+$points pts';
+  }
+
+  @override
+  String get eraseButton => 'Erase';
+
+  @override
+  String get solvedHint => 'Tap Clear or Skip to continue.';
+
+  @override
+  String get retryHint => 'You can edit the expression and check again.';
 }

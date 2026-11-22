@@ -30,13 +30,26 @@ class _GameScreenState extends ConsumerState<GameScreen>
   int _selectedSlot = 1;
   bool _isAnimatingReset = false;
 
+  // Após verificar, a expressão fica parada. Se acertou, fica bloqueada
+  // (só dá para Limpar ou Pular); se errou, o usuário pode continuar editando.
+  bool _locked = false;
+  GameResultBanner? _banner;
+
   // Animação de feedback (acerto: pulso verde + confete; erro: tremor vermelho)
   late final AnimationController _fbController;
   _Feedback _fb = _Feedback.none;
 
+  late final GameSession _session;
+
   @override
   void initState() {
     super.initState();
+    // Restaura a rodada em andamento (ao voltar de outra página)
+    _session = ref.read(gameSessionProvider);
+    _slots = List.of(_session.slots);
+    _selectedSlot = _session.selectedSlot;
+    _banner = _session.banner;
+    _locked = _session.locked && _session.banner != null;
     _fbController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
@@ -46,6 +59,11 @@ class _GameScreenState extends ConsumerState<GameScreen>
 
   @override
   void dispose() {
+    // Guarda a rodada para restaurar quando o usuário voltar ao jogo
+    _session.slots = List.of(_slots);
+    _session.selectedSlot = _selectedSlot;
+    _session.locked = _locked;
+    _session.banner = _banner;
     _fbController.dispose();
     super.dispose();
   }
@@ -87,12 +105,18 @@ class _GameScreenState extends ConsumerState<GameScreen>
       _slots = ['', '', keepEquals ? '=' : '', '', ''];
       _selectedSlot = 1;
       _isAnimatingReset = false;
+      _locked = false;
+      _banner = null;
+      _fb = _Feedback.none;
     });
   }
 
   void _insertOperator(String op) {
+    if (_locked) return;
     _playClickSound();
     setState(() {
+      _banner = null;
+      _fb = _Feedback.none;
       // Garante apenas um '=' na equação
       if (op == '=') {
         for (int i = 0; i < _slots.length; i++) {
@@ -104,8 +128,11 @@ class _GameScreenState extends ConsumerState<GameScreen>
   }
 
   void _backspaceSlot() {
+    if (_locked) return;
     _playClickSound();
     setState(() {
+      _banner = null;
+      _fb = _Feedback.none;
       final current = _slots[_selectedSlot];
       if (current.isNotEmpty) {
         if (current.endsWith('**')) {
@@ -130,55 +157,67 @@ class _GameScreenState extends ConsumerState<GameScreen>
     }
   }
 
+  /// Formata o valor de um lado da igualdade (inteiro sem casas decimais).
+  String _fmt(double? v) {
+    if (v == null) return '?';
+    return v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2);
+  }
+
   Future<void> _verifyEquation(
     String plate,
     DifficultyLevel level,
-    List<String> solvedNumbers,
     AppLocalizations l10n,
   ) async {
+    if (_locked) return;
     final raw = _buildRawExpression(plate);
     final result = MathEngine.evaluateEquation(raw, level);
 
     // Feedback diferente para acerto e erro (animação + som opcional)
-    _playFeedback(result.isValid ? _Feedback.success : _Feedback.error);
+    setState(() => _playFeedback(
+        result.isValid ? _Feedback.success : _Feedback.error));
     if (ref.read(appSettingsProvider).isSoundEnabled) {
       final sound = ref.read(soundServiceProvider);
       result.isValid ? sound.playSuccess() : sound.playError();
     }
 
-    // Animação obrigatória dos operadores voltando aos botões após verificar
-    await _animateOperatorsBack();
-    if (!mounted) return;
-
     if (result.isValid) {
+      // Congela a expressão: só dá para Limpar ou Pular a partir daqui
+      setState(() => _locked = true);
+
       final pts = _pointsForDifficulty(level);
       final service = ref.read(firestoreServiceProvider);
       try {
-        await service.recordSolvedNumber(plate, pts);
+        await service.recordSolvedNumber(
+          plate,
+          pts,
+          expression: raw,
+          level: level.name,
+        );
       } catch (_) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.errorSavingProgress),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
+        setState(() {
+          _locked = false;
+          _fb = _Feedback.none;
+          _banner = GameResultBanner(
+            success: false,
+            message: l10n.errorSavingProgress,
+            hint: l10n.retryHint,
+          );
+        });
         return;
       }
-
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.successMessage(pts)),
-          backgroundColor: Colors.green.shade700,
-        ),
-      );
 
-      // Sorteia novo número ainda não resolvido
-      final updatedSolved = [...solvedNumbers, plate];
-      ref
-          .read(currentPlateProvider.notifier)
-          .setPlate(service.generateUnsolvedPlate(updatedSolved));
+      setState(() {
+        _banner = GameResultBanner(
+          success: true,
+          message: l10n.successMessage(pts),
+          detail: '${_fmt(result.leftValue)} = ${_fmt(result.rightValue)}',
+          hint: l10n.solvedHint,
+        );
+      });
+      // Atualiza a pontuação; a placa resolvida continua na tela até o usuário
+      // clicar em Limpar ou Pular.
       _reloadProgress();
     } else {
       String errorMsg;
@@ -190,20 +229,33 @@ class _GameScreenState extends ConsumerState<GameScreen>
           errorMsg = l10n.errorOperatorNotAllowed;
           break;
         case MathEvalError.notEqual:
-          final lStr = result.leftValue?.toStringAsFixed(2) ?? '?';
-          final rStr = result.rightValue?.toStringAsFixed(2) ?? '?';
-          errorMsg = l10n.errorNotEqual(lStr, rStr);
+          errorMsg = l10n.errorNotEqual(
+            _fmt(result.leftValue),
+            _fmt(result.rightValue),
+          );
           break;
         default:
           errorMsg = l10n.errorInvalidSyntax;
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(errorMsg),
-          backgroundColor: Theme.of(context).colorScheme.error,
-        ),
-      );
+      // Não limpa os operadores: o usuário continua de onde parou
+      setState(() {
+        _banner = GameResultBanner(
+          success: false,
+          message: errorMsg,
+          hint: l10n.retryHint,
+        );
+      });
+    }
+  }
+
+  /// Limpar: se a placa já foi resolvida, parte para um novo número.
+  void _clearAction(String plate, List<String> solvedNumbers) {
+    if (_locked) {
+      _skipPlate(plate, solvedNumbers);
+    } else {
+      _playClickSound();
+      _animateOperatorsBack();
     }
   }
 
@@ -275,7 +327,7 @@ class _GameScreenState extends ConsumerState<GameScreen>
         // Garante uma placa ainda não resolvida por este usuário
         var currentPlate = ref.watch(currentPlateProvider);
         if (currentPlate == null ||
-            progress.solvedNumbers.contains(currentPlate)) {
+            (!_locked && progress.solvedNumbers.contains(currentPlate))) {
           currentPlate = ref
               .read(firestoreServiceProvider)
               .generateUnsolvedPlate(progress.solvedNumbers);
@@ -509,7 +561,13 @@ class _GameScreenState extends ConsumerState<GameScreen>
                                 radius: 26,
                                 depth: 8,
                                 padding: const EdgeInsets.all(18),
-                                borderColor: active ? accent : null,
+                                borderColor: active
+                                    ? accent
+                                    : (_banner == null
+                                        ? null
+                                        : (_banner!.success
+                                            ? Colors.green.shade600
+                                            : colorScheme.error)),
                                 extraShadows: active
                                     ? [
                                         BoxShadow(
@@ -554,35 +612,77 @@ class _GameScreenState extends ConsumerState<GameScreen>
                       );
                     },
                   ),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 250),
+                    curve: Curves.easeOut,
+                    alignment: Alignment.topCenter,
+                    child: _banner == null
+                        ? const SizedBox(width: double.infinity)
+                        : Padding(
+                            padding: const EdgeInsets.only(top: 18),
+                            child: _buildBanner(_banner!, colorScheme),
+                          ),
+                  ),
                   const SizedBox(height: 28),
 
                   // Teclado de operadores permitidos no nível
-                  NeuBox(
-                    radius: 24,
-                    padding: const EdgeInsets.all(16),
-                    child: Wrap(
-                      alignment: WrapAlignment.center,
-                      spacing: 12,
-                      runSpacing: 14,
+                  Opacity(
+                    opacity: _locked ? 0.4 : 1,
+                    child: IgnorePointer(
+                      ignoring: _locked,
+                      // Operadores (retângulo grande) + Apagar (retângulo ao lado)
+                      child: IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        ...allowedOps.map(
-                          (op) => NeuButton(
-                            minSize: const Size(52, 48),
-                            onPressed: () => _insertOperator(op),
-                            child: Text(
-                              op,
-                              style: const TextStyle(fontSize: 18),
+                        Expanded(
+                          child: NeuBox(
+                            radius: 24,
+                            padding: const EdgeInsets.all(14),
+                            child: Wrap(
+                              alignment: WrapAlignment.center,
+                              spacing: 10,
+                              runSpacing: 12,
+                              children: [
+                                ...allowedOps.map(
+                                  (op) => NeuButton(
+                                    minSize: const Size(48, 48),
+                                    onPressed: () => _insertOperator(op),
+                                    child: Text(
+                                      op,
+                                      style: const TextStyle(fontSize: 18),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
-                        // Apagar do slot selecionado
-                        NeuButton(
-                          minSize: const Size(56, 48),
-                          onPressed: _backspaceSlot,
-                          child: const Icon(Icons.backspace_outlined),
+                        const SizedBox(width: 14),
+                        SizedBox(
+                          width: 84,
+                          child: NeuButton(
+                            radius: 24,
+                            minSize: const Size(84, 0),
+                            padding: const EdgeInsets.all(8),
+                            onPressed: _backspaceSlot,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.backspace_outlined, size: 26),
+                                const SizedBox(height: 6),
+                                FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(l10n.eraseButton),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ],
                     ),
+                  ),
+                  ),
                   ),
                   const SizedBox(height: 28),
 
@@ -594,12 +694,9 @@ class _GameScreenState extends ConsumerState<GameScreen>
                         child: NeuButton(
                           filled: true,
                           minSize: const Size(0, 56),
-                          onPressed: () => _verifyEquation(
-                            plate,
-                            difficulty,
-                            progress.solvedNumbers,
-                            l10n,
-                          ),
+                          onPressed: _locked
+                              ? null
+                              : () => _verifyEquation(plate, difficulty, l10n),
                           child: FittedBox(
                             fit: BoxFit.scaleDown,
                             child: Row(
@@ -617,10 +714,8 @@ class _GameScreenState extends ConsumerState<GameScreen>
                       Expanded(
                         child: NeuButton(
                           minSize: const Size(0, 56),
-                          onPressed: () {
-                            _playClickSound();
-                            _animateOperatorsBack();
-                          },
+                          onPressed: () =>
+                              _clearAction(plate, progress.solvedNumbers),
                           child: FittedBox(
                             fit: BoxFit.scaleDown,
                             child: Row(
@@ -661,6 +756,68 @@ class _GameScreenState extends ConsumerState<GameScreen>
           ),
         );
       },
+    );
+  }
+
+  Widget _buildBanner(GameResultBanner b, ColorScheme colorScheme) {
+    final bg = b.success ? Colors.green.shade700 : colorScheme.error;
+    final fg = b.success ? Colors.white : colorScheme.onError;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: bg.withValues(alpha: 0.35),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            b.success ? Icons.check_circle_rounded : Icons.cancel_rounded,
+            color: fg,
+            size: 28,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  b.message,
+                  style: TextStyle(
+                    color: fg,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+                if (b.detail != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    b.detail!,
+                    style: TextStyle(
+                      color: fg,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 22,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 6),
+                Text(
+                  b.hint,
+                  style: TextStyle(color: fg.withValues(alpha: 0.9), fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -705,6 +862,7 @@ class _GameScreenState extends ConsumerState<GameScreen>
 
     return GestureDetector(
       onTap: () {
+        if (_locked) return;
         _playClickSound();
         setState(() => _selectedSlot = index);
       },
