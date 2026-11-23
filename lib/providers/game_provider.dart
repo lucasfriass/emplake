@@ -199,7 +199,8 @@ class GameResultBanner {
 /// Vive fora da tela para não se perder ao trocar de página (histórico,
 /// configurações). É recriado ao sair da conta.
 class GameSession {
-  List<String> slots = ['', '', '=', '', ''];
+  // Cada espaço guarda uma lista de operadores, na ordem em que aparecem
+  List<List<String>> slots = [[], [], ['='], [], []];
   int selectedSlot = 1;
   bool locked = false;
   GameResultBanner? banner;

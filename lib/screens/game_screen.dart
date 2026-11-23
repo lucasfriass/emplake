@@ -21,14 +21,56 @@ class GameScreen extends ConsumerStatefulWidget {
 }
 
 class _GameScreenState extends ConsumerState<GameScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late Future<UserProgressData> _progressFuture;
 
   // 5 slots ao redor dos 4 dígitos: [S0] D0 [S1] D1 [S2] D2 [S3] D3 [S4]
   // Por padrão, o '=' já começa no slot central (índice 2)
-  List<String> _slots = ['', '', '=', '', ''];
+  // Cada espaço é uma lista de operadores (cada um um "token"), na ordem em
+  // que aparecem. Assim dá para escrever √ antes ou depois de outro operador.
+  List<List<String>> _slots = [[], [], ['='], [], []];
   int _selectedSlot = 1;
   bool _isAnimatingReset = false;
+
+  // Arrastar operador: true enquanto um operador está sendo arrastado.
+  // Os espaços vazios se alargam para servir de alvo e o espaço sob o dedo
+  // abre uma lacuna maior, empurrando dígitos e operadores vizinhos.
+  bool _draggingOperator = false;
+  // Posição de soltura do operador arrastado: espaço (0 a 4) e índice dentro
+  // dele (0 = antes do primeiro operador do espaço). Calculada pela posição do
+  // ponteiro, então vale para os dois lados de cada dígito e de cada operador.
+  int? _hoverSlot;
+  int _hoverIndex = 0;
+  String? _hoverOp;
+  // Uma chave por dígito e uma por operador colocado, para medir onde estão
+  final List<GlobalKey> _digitKeys = List.generate(4, (_) => GlobalKey());
+  final Map<String, GlobalKey> _tokenKeys = {};
+
+  /// Descobre qual espaço fica mais perto do ponteiro: conta quantos dígitos
+  /// estão à esquerda dele (0 = antes do primeiro, 4 = depois do último).
+  int _slotForPointer(Offset global) {
+    int slot = 0;
+    for (int i = 0; i < 4; i++) {
+      final box = _digitKeys[i].currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.attached) continue;
+      final centerX = box.localToGlobal(box.size.center(Offset.zero)).dx;
+      if (global.dx > centerX) slot = i + 1;
+    }
+    return slot;
+  }
+
+  /// Dentro do espaço [slot], descobre em que posição o ponteiro cai: conta
+  /// quantos operadores já colocados estão à esquerda dele.
+  int _indexForPointer(int slot, double dx) {
+    int index = 0;
+    for (int t = 0; t < _slots[slot].length; t++) {
+      final box = _tokenKeys['$slot-$t']?.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.attached) continue;
+      final centerX = box.localToGlobal(box.size.center(Offset.zero)).dx;
+      if (dx > centerX) index = t + 1;
+    }
+    return index;
+  }
 
   // Após verificar, a expressão fica parada. Se acertou, fica bloqueada
   // (só dá para Limpar ou Pular); se errou, o usuário pode continuar editando.
@@ -37,6 +79,10 @@ class _GameScreenState extends ConsumerState<GameScreen>
 
   // Animação de feedback (acerto: pulso verde + confete; erro: tremor vermelho)
   late final AnimationController _fbController;
+
+  // Tremidinha dos operadores colocados enquanto algo é arrastado (como os
+  // ícones do celular no modo de reorganizar)
+  late final AnimationController _wiggle;
   _Feedback _fb = _Feedback.none;
 
   late final GameSession _session;
@@ -46,7 +92,7 @@ class _GameScreenState extends ConsumerState<GameScreen>
     super.initState();
     // Restaura a rodada em andamento (ao voltar de outra página)
     _session = ref.read(gameSessionProvider);
-    _slots = List.of(_session.slots);
+    _slots = _session.slots.map((l) => List<String>.of(l)).toList();
     _selectedSlot = _session.selectedSlot;
     _banner = _session.banner;
     _locked = _session.locked && _session.banner != null;
@@ -54,13 +100,36 @@ class _GameScreenState extends ConsumerState<GameScreen>
       vsync: this,
       duration: const Duration(milliseconds: 900),
     );
+    _wiggle = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 130),
+    );
     _progressFuture = ref.read(firestoreServiceProvider).fetchUserProgress();
+  }
+
+  /// Começa/termina o modo de arrasto: liga/desliga a tremidinha.
+  void _setDragging(bool on) {
+    if (!mounted) return;
+    setState(() {
+      _draggingOperator = on;
+      if (!on) {
+        _hoverSlot = null;
+        _hoverOp = null;
+      }
+    });
+    if (on) {
+      _wiggle.repeat(reverse: true);
+    } else {
+      _wiggle.stop();
+      _wiggle.value = 0;
+    }
   }
 
   @override
   void dispose() {
+    _wiggle.dispose();
     // Guarda a rodada para restaurar quando o usuário voltar ao jogo
-    _session.slots = List.of(_slots);
+    _session.slots = _slots.map((l) => List<String>.of(l)).toList();
     _session.selectedSlot = _selectedSlot;
     _session.locked = _locked;
     _session.banner = _banner;
@@ -89,10 +158,10 @@ class _GameScreenState extends ConsumerState<GameScreen>
   String _buildRawExpression(String plate) {
     final buf = StringBuffer();
     for (int i = 0; i < 4; i++) {
-      buf.write(_slots[i]);
+      buf.writeAll(_slots[i]);
       buf.write(plate[i]);
     }
-    buf.write(_slots[4]);
+    buf.writeAll(_slots[4]);
     return buf.toString();
   }
 
@@ -102,7 +171,7 @@ class _GameScreenState extends ConsumerState<GameScreen>
     await Future.delayed(const Duration(milliseconds: 350));
     if (!mounted) return;
     setState(() {
-      _slots = ['', '', keepEquals ? '=' : '', '', ''];
+      _slots = [[], [], keepEquals ? ['='] : [], [], []];
       _selectedSlot = 1;
       _isAnimatingReset = false;
       _locked = false;
@@ -111,8 +180,32 @@ class _GameScreenState extends ConsumerState<GameScreen>
     });
   }
 
+  /// Toque num operador do teclado: entra no fim do espaço selecionado.
   void _insertOperator(String op) {
+    _placeToken(op, _selectedSlot, _slots[_selectedSlot].length);
+  }
+
+  /// Coloca [op] no espaço [slot], na posição [index] (0 = antes de todos).
+  /// Se [fromSlot]/[fromIndex] vierem preenchidos, é uma mudança de lugar: o
+  /// operador é tirado da origem antes de entrar no destino.
+  void _placeToken(
+    String op,
+    int slot,
+    int index, {
+    int? fromSlot,
+    int? fromIndex,
+  }) {
     if (_locked) return;
+    var target = index;
+    if (fromSlot != null && fromIndex != null) {
+      // Soltou exatamente onde já estava: nada a fazer
+      if (fromSlot == slot && (index == fromIndex || index == fromIndex + 1)) {
+        return;
+      }
+      _slots[fromSlot].removeAt(fromIndex);
+      // Tirar da frente, no mesmo espaço, desloca o destino uma casa
+      if (fromSlot == slot && fromIndex < index) target--;
+    }
     _playClickSound();
     setState(() {
       _banner = null;
@@ -120,10 +213,16 @@ class _GameScreenState extends ConsumerState<GameScreen>
       // Garante apenas um '=' na equação
       if (op == '=') {
         for (int i = 0; i < _slots.length; i++) {
-          _slots[i] = _slots[i].replaceAll('=', '');
+          if (i == slot) {
+            // '=' removidos antes do ponto de entrada deslocam o destino
+            final cut = math.min(math.max(target, 0), _slots[i].length);
+            target -= _slots[i].sublist(0, cut).where((t) => t == '=').length;
+          }
+          _slots[i].removeWhere((t) => t == '=');
         }
       }
-      _slots[_selectedSlot] = '${_slots[_selectedSlot]}$op';
+      final at = math.min(math.max(target, 0), _slots[slot].length);
+      _slots[slot].insert(at, op);
     });
   }
 
@@ -133,13 +232,9 @@ class _GameScreenState extends ConsumerState<GameScreen>
     setState(() {
       _banner = null;
       _fb = _Feedback.none;
-      final current = _slots[_selectedSlot];
-      if (current.isNotEmpty) {
-        if (current.endsWith('**')) {
-          _slots[_selectedSlot] = current.substring(0, current.length - 2);
-        } else {
-          _slots[_selectedSlot] = current.substring(0, current.length - 1);
-        }
+      // Apaga o último operador do espaço selecionado
+      if (_slots[_selectedSlot].isNotEmpty) {
+        _slots[_selectedSlot].removeLast();
       }
     });
   }
@@ -381,17 +476,64 @@ class _GameScreenState extends ConsumerState<GameScreen>
             const SizedBox(height: 18),
 
             // Linha interativa: [Slot0] D0 [Slot1] D1 [Slot2] D2 [Slot3] D3 [Slot4]
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  for (int i = 0; i < 4; i++) ...[
-                    _buildSlotButton(i, colorScheme),
-                    _buildDigitTile(plate[i], colorScheme),
-                  ],
-                  _buildSlotButton(4, colorScheme),
-                ],
+            // A linha inteira é o alvo: soltar em qualquer ponto vale para o
+            // espaço mais próximo (esquerda ou direita de qualquer dígito).
+            DragTarget<_DragOp>(
+              onWillAcceptWithDetails: (_) => !_locked,
+              onMove: (details) {
+                // details.offset é o canto da imagem arrastada; usa o centro
+                final pointer = details.offset + const Offset(24, 24);
+                final slot = _slotForPointer(pointer);
+                final index = _indexForPointer(slot, pointer.dx);
+                if (slot != _hoverSlot ||
+                    index != _hoverIndex ||
+                    details.data.text != _hoverOp) {
+                  setState(() {
+                    _hoverSlot = slot;
+                    _hoverIndex = index;
+                    _hoverOp = details.data.text;
+                  });
+                }
+              },
+              onLeave: (_) => setState(() {
+                _hoverSlot = null;
+                _hoverOp = null;
+              }),
+              onAcceptWithDetails: (details) {
+                final pointer = details.offset + const Offset(24, 24);
+                final slot = _hoverSlot ?? _slotForPointer(pointer);
+                final index = _hoverSlot == null
+                    ? _indexForPointer(slot, pointer.dx)
+                    : _hoverIndex;
+                setState(() {
+                  _selectedSlot = slot;
+                  _hoverSlot = null;
+                  _hoverOp = null;
+                });
+                _placeToken(
+                  details.data.text,
+                  slot,
+                  index,
+                  fromSlot: details.data.fromSlot,
+                  fromIndex: details.data.fromIndex,
+                );
+              },
+              builder: (context, candidate, rejected) => Padding(
+                // Folga em volta para facilitar soltar perto da linha
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      for (int i = 0; i < 4; i++) ...[
+                        _buildSlotButton(i, colorScheme),
+                        _buildDigitTile(plate[i], colorScheme, _digitKeys[i]),
+                      ],
+                      _buildSlotButton(4, colorScheme),
+                    ],
+                  ),
+                ),
               ),
             ),
             const SizedBox(height: 18),
@@ -645,12 +787,53 @@ class _GameScreenState extends ConsumerState<GameScreen>
                               runSpacing: 12,
                               children: [
                                 ...allowedOps.map(
-                                  (op) => NeuButton(
-                                    minSize: const Size(48, 48),
-                                    onPressed: () => _insertOperator(op),
-                                    child: Text(
-                                      op,
-                                      style: const TextStyle(fontSize: 18),
+                                  (op) => Draggable<_DragOp>(
+                                    // Dado levado até o espaço (DragTarget)
+                                    data: _DragOp(op),
+                                    // Imagem que acompanha o dedo/mouse
+                                    feedback: Material(
+                                      type: MaterialType.transparency,
+                                      child: NeuBox(
+                                        radius: 14,
+                                        depth: 8,
+                                        borderColor: colorScheme.primary,
+                                        padding: const EdgeInsets.all(12),
+                                        child: Text(
+                                          op,
+                                          style: TextStyle(
+                                            fontSize: 24,
+                                            fontWeight: FontWeight.bold,
+                                            color: colorScheme.primary,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    // O botão original fica esmaecido no lugar
+                                    childWhenDragging: Opacity(
+                                      opacity: 0.35,
+                                      child: NeuButton(
+                                        minSize: const Size(48, 48),
+                                        onPressed: null,
+                                        child: Text(
+                                          op,
+                                          style: const TextStyle(fontSize: 18),
+                                        ),
+                                      ),
+                                    ),
+                                    onDragStarted: () {
+                                      _playClickSound();
+                                      _setDragging(true);
+                                    },
+                                    // Chamado ao soltar (dentro ou fora de um espaço)
+                                    onDragEnd: (_) => _setDragging(false),
+                                    // O toque simples continua inserindo no espaço selecionado
+                                    child: NeuButton(
+                                      minSize: const Size(48, 48),
+                                      onPressed: () => _insertOperator(op),
+                                      child: Text(
+                                        op,
+                                        style: const TextStyle(fontSize: 18),
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -837,8 +1020,9 @@ class _GameScreenState extends ConsumerState<GameScreen>
     );
   }
 
-  Widget _buildDigitTile(String digit, ColorScheme colorScheme) {
+  Widget _buildDigitTile(String digit, ColorScheme colorScheme, Key key) {
     return Padding(
+      key: key,
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: NeuBox(
         radius: 12,
@@ -856,9 +1040,129 @@ class _GameScreenState extends ConsumerState<GameScreen>
     );
   }
 
+  /// Um operador já colocado: pode ser arrastado para outro lugar.
+  Widget _buildToken(int slot, int t, ColorScheme colorScheme) {
+    final text = _slots[slot][t];
+    const style = TextStyle(fontSize: 22, fontWeight: FontWeight.bold);
+    return Draggable<_DragOp>(
+      key: _tokenKeys.putIfAbsent('$slot-$t', () => GlobalKey()),
+      maxSimultaneousDrags: _locked ? 0 : 1,
+      data: _DragOp(text, fromSlot: slot, fromIndex: t),
+      // O operador "levantado": maior e com sombra, acompanhando o dedo
+      feedback: Material(
+        type: MaterialType.transparency,
+        child: Transform.scale(
+          scale: 1.15,
+          child: NeuBox(
+            radius: 14,
+            depth: 10,
+            borderColor: colorScheme.primary,
+            padding: const EdgeInsets.all(12),
+            child: Text(
+              text,
+              style: style.copyWith(fontSize: 24, color: colorScheme.primary),
+            ),
+          ),
+        ),
+      ),
+      // O lugar de origem se fecha suavemente (largura vai a zero), como os
+      // ícones vizinhos ocupando o espaço de quem foi levantado
+      childWhenDragging: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 1, end: 0),
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        builder: (context, v, _) => ClipRect(
+          child: Align(
+            alignment: Alignment.centerLeft,
+            widthFactor: v,
+            child: Opacity(opacity: v, child: Text(text, style: style)),
+          ),
+        ),
+      ),
+      onDragStarted: () {
+        _playClickSound();
+        _setDragging(true);
+      },
+      onDragEnd: (_) => _setDragging(false),
+      // Enquanto algo é arrastado, os operadores colocados "tremem" de leve
+      child: AnimatedBuilder(
+        animation: _wiggle,
+        builder: (context, child) => Transform.rotate(
+          angle: _draggingOperator
+              ? (t.isEven ? 1 : -1) * (_wiggle.value - 0.5) * 0.12
+              : 0,
+          child: child,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 1),
+          child: Text(
+            text,
+            style: style.copyWith(color: colorScheme.onSurface),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSlotButton(int index, ColorScheme colorScheme) {
     final isSelected = _selectedSlot == index;
-    final content = _slots[index];
+    final tokens = _slots[index];
+    final hovered = _hoverSlot == index;
+    // Largura mínima: normal 28; durante o arrasto 40; sob o operador 56.
+    final minWidth = hovered ? 56.0 : (_draggingOperator ? 40.0 : 28.0);
+
+    // Operadores do espaço. Entre eles (e nas pontas) há uma "lacuna" cuja
+    // largura é animada: a do ponto de soltura abre e as outras fecham, então
+    // tudo desliza suavemente para dar lugar ao operador arrastado.
+    final ghostWidth = (_hoverOp?.length ?? 1) * 13.0 + 4;
+    Widget gap(int t) {
+      final open = hovered && _hoverIndex == t;
+      return AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        width: open ? ghostWidth : 0,
+        // Altura fixa: dentro de uma Row a altura é ilimitada e o OverflowBox
+        // sem altura própria ficaria com tamanho infinito
+        height: 30,
+        child: ClipRect(
+          child: OverflowBox(
+            maxWidth: ghostWidth,
+            minWidth: ghostWidth,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 200),
+              opacity: open ? 1 : 0,
+              child: Text(
+                _hoverOp ?? '',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.primary.withValues(alpha: 0.6),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    final children = <Widget>[];
+    for (int t = 0; t <= tokens.length; t++) {
+      children.add(gap(t));
+      if (t < tokens.length) children.add(_buildToken(index, t, colorScheme));
+    }
+    if (tokens.isEmpty && !hovered) {
+      children.add(
+        Text(
+          '·',
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
+            color: colorScheme.outline,
+          ),
+        ),
+      );
+    }
 
     return GestureDetector(
       onTap: () {
@@ -871,11 +1175,13 @@ class _GameScreenState extends ConsumerState<GameScreen>
         child: NeuBox(
           radius: 12,
           depth: 3,
-          pressed: isSelected,
-          borderColor: isSelected ? colorScheme.primary : null,
+          pressed: isSelected || hovered,
+          borderColor: (isSelected || hovered) ? colorScheme.primary : null,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 52),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            constraints: BoxConstraints(minWidth: minWidth, minHeight: 52),
             child: Center(
               widthFactor: 1,
               heightFactor: 1,
@@ -888,15 +1194,9 @@ class _GameScreenState extends ConsumerState<GameScreen>
                   offset:
                       _isAnimatingReset ? const Offset(0, 1.5) : Offset.zero,
                   duration: const Duration(milliseconds: 300),
-                  child: Text(
-                    content.isEmpty ? '·' : content,
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: content.isEmpty
-                          ? colorScheme.outline
-                          : colorScheme.onSurface,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: children,
                   ),
                 ),
               ),
@@ -943,4 +1243,14 @@ class _BurstPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _BurstPainter oldDelegate) =>
       oldDelegate.t != t;
+}
+
+/// Dado levado no arrasto: o texto do operador e, se já estava na expressão,
+/// de onde veio (espaço e posição). Sem origem = veio do teclado de operadores.
+class _DragOp {
+  const _DragOp(this.text, {this.fromSlot, this.fromIndex});
+
+  final String text;
+  final int? fromSlot;
+  final int? fromIndex;
 }
